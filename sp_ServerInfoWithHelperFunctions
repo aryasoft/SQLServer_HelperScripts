@@ -1,0 +1,287 @@
+CREATE FUNCTION fn_format_number(
+	@number		numeric(28, 8),
+	@prec		tinyint)
+RETURNS nvarchar(100)
+WITH ENCRYPTION
+AS
+
+BEGIN
+	DECLARE @out nvarchar(100), @offset int=(CASE WHEN @prec=0 THEN 0 ELSE @prec+1 END)
+
+	SET @out=REVERSE(LTRIM(ISNULL(STR(@number, 20, @prec), '')))
+	WHILE (@offset<LEN(@out)) BEGIN
+		IF (SUBSTRING(@out, @offset, 1)!='.') BEGIN
+			SET @out=LEFT(@out, @offset)+' '+SUBSTRING(@out, @offset+1, LEN(@out))
+			SET @offset=@offset+1
+		END
+		SET @offset=@offset+3
+	END
+	SET @out=LTRIM(REVERSE(@out))
+	IF (LEN(@out)<15)
+		SET @out=NULLIF(RIGHT(REPLICATE(' ', 15+@prec)+@out, 15+@prec), '')
+
+	RETURN @out
+END
+GO
+CREATE FUNCTION fn_friendly_age (
+	@from	datetime,
+	@to	datetime)
+RETURNS nvarchar(20)
+WITH ENCRYPTION
+AS
+
+BEGIN
+	DECLARE @age nvarchar(20)
+
+	IF (@from IS NOT NULL AND @to IS NOT NULL)
+		SET @age=(CASE
+			WHEN DATEDIFF(ss, @from, @to)<1
+			THEN '       '+STR(DATEDIFF(ms, @from, @to), 10, 0)+' ms.'
+
+			WHEN DATEDIFF(ss, @from, @to)<180
+			THEN '        '+STR(0.001*DATEDIFF(ms, @from, @to), 10, 1)+' s.'
+
+			WHEN DATEDIFF(ss, @from, @to)<24*3600
+			THEN '     '+SUBSTRING(CONVERT(nvarchar(20), DATEADD(ss, DATEDIFF(ss, @from, @to), 0), 120), 12, 8)
+
+			WHEN DATEDIFF(dd, @from, @to)<3
+			THEN STR(FLOOR(1.0*DATEDIFF(ss, @from, @to)/(3600*24)), 3, 0)+'d+'+
+				SUBSTRING(CONVERT(nvarchar(20), DATEADD(ss, DATEDIFF(ss, @from, @to), 0), 120), 12, 5)+'  '
+
+			ELSE STR(FLOOR(1.0*DATEDIFF(ss, @from, @to)/(3600*24)), 3, 0)+'d '+
+				REPLICATE(' ', 5)+'  '
+			END)
+
+	RETURN @age
+END
+GO
+CREATE FUNCTION fn_friendly_size (
+	@bytes	bigint)
+RETURNS nvarchar(20)
+WITH ENCRYPTION
+AS
+
+BEGIN;
+	DECLARE @size nvarchar(20), @k bigint=1024;
+
+	IF (@bytes IS NOT NULL)
+		SET @size=(CASE
+			--WHEN @bytes<4*@k
+			--THEN dbo.fn_format_number(1.0*@bytes, 0)+' B'
+
+			WHEN @bytes<4*@k*@k
+			THEN dbo.fn_format_number(1.0*@bytes/@k, 1)+' kB'
+
+			WHEN @bytes<4*@k*@k*@k
+			THEN dbo.fn_format_number(1.0*@bytes/@k/@k, 2)+' MB'
+
+			WHEN @bytes<4*@k*@k*@k*@k
+			THEN dbo.fn_format_number(1.0*@bytes/@k/@k/@k, 2)+' GB'
+
+			ELSE dbo.fn_format_number(1.0*@bytes/@k/@k/@k/@k, 2)+' TB'
+			END);
+
+	RETURN @size;
+END;
+GO
+CREATE FUNCTION [dbo].[fn_friendly_time] (
+	@bytes	bigint)
+RETURNS nvarchar(50)
+WITH ENCRYPTION
+AS
+
+BEGIN;
+--63000
+	DECLARE @size nvarchar(50), @k bigint=60;
+
+	 
+		IF (@bytes IS NOT NULL)
+		SET @bytes=@bytes*1.0/1000;--sec
+		SET @size=(CASE
+			--WHEN @bytes<4*@k
+			--THEN dbo.fn_format_number(1.0*@bytes, 0)+' B'
+
+			WHEN @bytes<@k
+			THEN dbo.fn_format_number(1.0*@bytes, 1)+' sec'
+
+			WHEN @bytes<@k*@k
+			THEN dbo.fn_format_number(1.0*@bytes/@k, 1)+' min'
+
+			WHEN @bytes<@k*@k*@k
+			THEN dbo.fn_format_number(1.0*@bytes/@k/@k, 1)+' hour'
+
+			ELSE dbo.fn_format_number(1.0*@bytes/@k/@k/@k/24, 1)+' day'
+			END);
+	RETURN @size;
+END;
+GO
+CREATE PROCEDURE sp_ServerInfo
+AS
+DECLARE @sql nvarchar(max), @sql2 nvarchar(max), @sql3 nvarchar(max),
+        @sql4 nvarchar(max), @name sysname, @virtual_machine_type int,
+        @version nvarchar(4), @physical_memory bigint, @virtual_memory bigint,
+        @gb bigint=1024*1024*1024, @mb bigint=1024*1024,
+        @max_server_memory bigint, @min_server_memory bigint, @max_degree_of_parallelism tinyint;
+ 
+    DECLARE @html nvarchar(MAX) = '' ,@ClearedS smallint=0, @TableQuery nvarchar(max)='';
+    SET @version=LEFT(CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(10)), 4);
+    IF (@version LIKE '9%') SET @version=LEFT('0'+@version, 4);
+    SELECT @max_server_memory=CAST([value] AS bigint)*1024*1024 FROM sys.configurations WHERE [name]='max server memory (MB)';
+    SELECT @min_server_memory=CAST([value] AS bigint)*1024*1024 FROM sys.configurations WHERE [name]='min server memory (MB)';
+    SELECT @max_degree_of_parallelism=CAST([value] AS tinyint)  FROM sys.configurations WHERE [name]='max degree of parallelism';
+ 
+        ----------------------------------------------------------------------------------------------------------------
+    -- CPU VISIABLE ONLINE CHECK
+    ----------------------------------------------------------------------------------------------------------------
+    DECLARE @OnlineCpuCount int,@LogicalCpuCount int, @AssignedCPUsInfo NVARCHAR(128) = '';
+ 
+   
+    SELECT @OnlineCpuCount = COUNT(*) FROM sys.dm_os_schedulers WHERE status = 'VISIBLE ONLINE';
+    SELECT @LogicalCpuCount = cpu_count FROM sys.dm_os_sys_info;
+     --@LogicalCpuCount AS 'ASSIGNED ONLINE CPU #', @OnlineCpuCount AS 'VISIBLE ONLINE CPU #',
+    IF @OnlineCpuCount < @LogicalCpuCount
+    BEGIN
+        SET @AssignedCPUsInfo = 'You are not using all CPU assigned to O/S! If it is VM, review your VM configuration to make sure you are not maxout Socket';
+    END
+    ELSE
+    BEGIN
+        SET @AssignedCPUsInfo ='You are using all CPUs assigned to O/S. GOOD!';
+    END
+    ----------------------------------------------------------------------------------------------------------------
+   IF (OBJECT_ID('tempdb..#dm_server_services')) IS NOT NULL DROP TABLE #dm_server_services
+    CREATE TABLE #dm_server_services (
+        _id                 tinyint IDENTITY(1, 1) NOT NULL,
+        servicename         nvarchar(512) NOT NULL,
+        startup_type_desc   nvarchar(512) NOT NULL,
+        status_desc         nvarchar(512) NOT NULL,
+        service_account     nvarchar(512) NOT NULL,
+        cluster_nodename    nvarchar(512) NULL,
+        PRIMARY KEY CLUSTERED (_id)
+    );
+    IF (OBJECT_ID('tempdb..#dm_server_services') IS NOT NULL) BEGIN;
+        BEGIN TRY;
+            INSERT INTO #dm_server_services
+            SELECT servicename, startup_type_desc, status_desc, service_account, cluster_nodename
+            FROM sys.dm_server_services;
+        END TRY
+        BEGIN CATCH;
+            PRINT 'sys.dm_server_services is not supported on this version of SQL Server.';
+        END CATCH;
+    END;
+    IF (@version<'11.0')
+        EXECUTE sp_executesql N'
+            SELECT @physical_memory=physical_memory_in_bytes,
+                @virtual_memory=virtual_memory_in_bytes
+            FROM sys.dm_os_sys_info',
+            N'@physical_memory bigint OUTPUT, @virtual_memory bigint OUTPUT',
+            @physical_memory=@physical_memory OUTPUT,
+            @virtual_memory=@virtual_memory OUTPUT;
+    IF (@version>='11.0')
+        EXECUTE sp_executesql N'
+            SELECT @physical_memory=physical_memory_kb*1024,
+                @virtual_memory=virtual_memory_kb*1024
+            FROM sys.dm_os_sys_info',
+            N'@physical_memory bigint OUTPUT, @virtual_memory bigint OUTPUT',
+            @physical_memory=@physical_memory OUTPUT,
+            @virtual_memory=@virtual_memory OUTPUT;
+ 
+    IF OBJECT_ID('tempdb..##TMP') IS NOT NULL BEGIN      DROP TABLE ##TMP    END
+ 
+    DECLARE @ServiceUptime NVARCHAR(8);
+    SELECT @ServiceUptime = CAST(DATEDIFF(HOUR,create_date,GETDATE()) AS nvarchar(16)) + ' Hours' FROM sys.databases WHERE database_id = 2
+ 
+ 
+/**/
+   declare @query1 nvarchar(max) ='SELECT
+        CAST(SERVERPROPERTY(''ComputerNamePhysicalNetBIOS'') AS nvarchar(128)) AS [Physical_name],
+        CAST(SERVERPROPERTY(''ServerName'') AS nvarchar(128)) AS [Instance_name],
+        (CASE CAST(SERVERPROPERTY(''IsClustered'') AS bit) WHEN 1 THEN ISNULL(''Cluster node ''+sqlsrv.cluster_nodename, ''Clustered'') ELSE ''Stand-alone'' END)+
+        (CASE WHEN SERVERPROPERTY(''IsHadrEnabled'')=1 THEN '' with Availability Groups'' ELSE '''' END)+
+        (CASE cast(@virtual_machine_type as varchar(5))
+            WHEN 1 THEN '' on Hypervisor''
+            WHEN 2 THEN '' on virtual machine''
+            ELSE '''' END) AS [Configuration],
+        ''SQL Server ''+(CASE @version
+            WHEN ''09.0'' THEN ''2005''
+            WHEN ''10.0'' THEN ''2008''
+            WHEN ''10.5'' THEN ''2008 R2''
+            WHEN ''11.0'' THEN ''2012''
+            WHEN ''12.0'' THEN ''2014''
+            WHEN ''13.0'' THEN ''2016''
+            WHEN ''14.0'' THEN ''2017''
+            WHEN ''15.0'' THEN ''2019'' ELSE @version END)+'' ''+
+            REPLACE(REPLACE(REPLACE(
+                REPLACE(CAST(SERVERPROPERTY(''Edition'') AS nvarchar(128)), (CASE WHEN @version>=''13.0'' THEN '' (64-bit)'' ELSE '''' END), ''''), '' Edition'', ''''),
+                ''Standard'', ''Std''), ''Enterprise'', ''Ent'') AS [Product_edition],
+        CAST(SERVERPROPERTY(''ProductLevel'') AS nvarchar(128))+ISNULL('', ''+
+            CAST(SERVERPROPERTY(''ProductUpdateLevel'') AS nvarchar(128)), '''')+'' (''+
+            CAST(SERVERPROPERTY(''ProductVersion'') AS nvarchar(128))+'')'' AS [Level_CU],
+ 
+        (CASE WHEN @max_server_memory/@mb> 2000000 THEN ''''
+              ELSE
+                (CASE WHEN @min_server_memory <@max_server_memory AND @min_server_memory >0
+                    THEN LTRIM(dbo.fn_friendly_size(@min_server_memory))+'' - ''
+                    ELSE '''' END)+
+                LTRIM(dbo.fn_friendly_size(@max_server_memory))+
+ 
+                (CASE WHEN @max_server_memory!=@physical_memory THEN '' / '' ELSE '''' END) END
+		 )+
+            LTRIM(dbo.fn_friendly_size(@physical_memory)) AS [Min_max_and_Physical mem],
+      dbo.fn_friendly_size(@virtual_memory) AS [Virtual mem],
+        CAST(sysinfo.cpu_count/sysinfo.hyperthread_ratio AS nvarchar(10))+
+            ISNULL(''x''+CAST(NULLIF(sysinfo.hyperthread_ratio, 1) AS nvarchar(10)), '''')+
+            ISNULL('' (''+CAST((SELECT NULLIF(MAX(memory_node_id), 0)+1
+                              FROM sys.dm_os_memory_clerks
+                              WHERE memory_node_id<64) AS nvarchar(10))+'' NUMA)'', '''') AS [Core_count],
+        @LogicalCpuCount AS ''ASSIGNED ONLINE CPU #'',
+        @OnlineCpuCount AS ''VISIBLE ONLINE CPU #'',
+        @AssignedCPUsInfo AS AssignedCPUsInfo,
+        ISNULL(CAST(NULLIF(cast(@max_degree_of_parallelism as nvarchar(max)), 0) AS nvarchar(10)), ''-'') AS [MaxDOP],
+        dbo.fn_friendly_age(sysinfo.sqlserver_start_time, GETDATE()) AS ServerUptime,
+        cast(@ServiceUptime as nvarchar(max)) AS ServiceUptime,
+        CAST(SERVERPROPERTY(''Collation'') AS nvarchar(128)) AS [Server_Collation],
+        sqlsrv.service_account AS [Service_acct],
+      sqlagt.service_account AS [Agent svc acct],
+        sqlagt.status_desc+'' (''+sqlagt.startup_type_desc+'')'' AS [SQL_Server_Agent]
+        
+              ,CASE WHEN SERVERPROPERTY(''ProductMajorVersion'')<14 THEN '''' ELSE ''ss.instant_file_initialization_enabled'' END AS Is_IFI_Enabled
+        INTO ##TMP
+    FROM sys.dm_os_sys_info AS sysinfo WITH (NOLOCK)
+    LEFT JOIN #dm_server_services AS sqlsrv ON sqlsrv.servicename LIKE ''SQL Server (%''
+    LEFT JOIN #dm_server_services AS sqlagt ON sqlagt.servicename LIKE ''SQL Server Agent (%''
+    JOIN sys.dm_server_services AS ss ON 1=1
+    
+    WHERE  
+     LEFT(ss.servicename, 12) = ''SQL Server ('''
+ 
+    DECLARE @ParmDefinition nvarchar(500);
+    SET @ParmDefinition = N'@virtual_machine_type int,  @version nvarchar(4),@max_server_memory bigint, @min_server_memory bigint, @max_degree_of_parallelism tinyint,  @mb bigint, @physical_memory bigint,@OnlineCpuCount int,@LogicalCpuCount int, @AssignedCPUsInfo NVARCHAR(128),@ServiceUptime NVARCHAR(8), @virtual_memory bigint ';
+    EXECUTE sp_executesql @query1,@ParmDefinition, @virtual_machine_type=@virtual_machine_type, @version=@version, @max_server_memory=@max_server_memory,   @min_server_memory= @min_server_memory, @max_degree_of_parallelism=@max_degree_of_parallelism, @mb=@mb,@physical_memory=@physical_memory,@OnlineCpuCount =@OnlineCpuCount ,@LogicalCpuCount =@LogicalCpuCount ,@AssignedCPUsInfo=@AssignedCPUsInfo, @ServiceUptime=@ServiceUptime, @virtual_memory = @virtual_memory
+ 
+
+    SET @TableQuery = 'SELECT
+        --[Physical_name],
+        --[Instance_name],
+        --[Configuration],
+        --[Product_edition],
+        --[Level_CU],
+        --[Min_max_and_Physical mem],
+        --[Core_count],
+        --[MaxDOP],
+        --[Uptime],
+        --[Server_Collation],
+        --[Service_acct],
+        --[SQL_Server_Agent],
+        --[SQLAdminPremiumVersion],
+        --[Is_IFI_Enabled],
+        *
+    FROM ##TMP'
+ 
+    
+        EXEC (@TableQuery)
+   
+ 
+    DROP TABLE ##TMP
+GO
+ /*run below query after created objects*/
+exec master.dbo.sp_ServerInfo
