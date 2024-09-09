@@ -285,3 +285,13 @@ DECLARE @sql nvarchar(max), @sql2 nvarchar(max), @sql3 nvarchar(max),
 GO
  /*run below query after created objects*/
 exec master.dbo.sp_ServerInfo
+
+
+GO
+/* DROP OBJECTS 
+DROP FUNCTION [dbo].[fn_format_number]
+DROP FUNCTION [dbo].[fn_friendly_age]
+DROP FUNCTION [dbo].[fn_friendly_size]
+DROP FUNCTION [dbo].[fn_friendly_time]
+DROP PROCEDURE [dbo].[sp_ServerInfo]
+*/
