@@ -1,3 +1,10 @@
+/*CLEAN OBJECTS IF EXISTS*/
+IF OBJECT_ID('dbo.fn_format_number', 'FN') IS NOT NULL DROP FUNCTION [dbo].[fn_format_number]
+IF OBJECT_ID('dbo.fn_friendly_age', 'FN') IS NOT NULL DROP FUNCTION [dbo].[fn_friendly_age]
+IF OBJECT_ID('dbo.fn_friendly_size', 'FN') IS NOT NULL DROP FUNCTION [dbo].[fn_friendly_size]
+IF OBJECT_ID('dbo.fn_friendly_time', 'FN') IS NOT NULL DROP FUNCTION [dbo].[fn_friendly_time]
+IF OBJECT_ID('dbo.sp_ServerInfo', 'P') IS NOT NULL DROP PROCEDURE [dbo].[sp_ServerInfo]
+GO
 CREATE FUNCTION fn_format_number(
 	@number		numeric(28, 8),
 	@prec		tinyint)
