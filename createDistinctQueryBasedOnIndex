@@ -1,0 +1,36 @@
+CREATE FUNCTION createDistinctQueryBasedOnIndex
+(
+	@schemaName nvarchar(200),
+	@tableName nvarchar(200),
+	@indexName nvarchar(200) 
+)
+RETURNS nvarchar(max) 
+AS
+BEGIN
+	Declare @result nvarchar(max)
+    
+	 SELECT @result= 'select '+STUFF(( SELECT  ',' + name
+                FROM    ( 
+						SELECT 
+							col.name
+						FROM 
+							 sys.indexes ind 
+						INNER JOIN sys.index_columns ic ON  ind.object_id = ic.object_id and ind.index_id = ic.index_id 
+						INNER JOIN sys.columns col ON ic.object_id = col.object_id and ic.column_id = col.column_id 
+						INNER JOIN sys.tables t ON ind.object_id = t.object_id 
+						INNER JOIN sys.schemas sch ON t.schema_id=sch.schema_id
+						WHERE 
+							 1=1
+							 --AND ind.is_primary_key = 0 
+							 --AND ind.is_unique = 0 
+							 --AND ind.is_unique_constraint = 0 
+							 AND t.is_ms_shipped = 0 
+							 AND sch.name='~schemaname'
+							 AND t.name='~tablename'
+							 AND ind.name='~indexname'
+                        ) x
+              FOR
+                XML PATH('')
+              ), 1, 1, '')+' FROM '+QUOTENAME('~schemaname')+'.'+QUOTENAME('~tablename')
+			return @result
+END
