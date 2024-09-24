@@ -25,12 +25,13 @@ BEGIN
 							 --AND ind.is_unique = 0 
 							 --AND ind.is_unique_constraint = 0 
 							 AND t.is_ms_shipped = 0 
-							 AND sch.name='~schemaname'
-							 AND t.name='~tablename'
-							 AND ind.name='~indexname'
+							 AND sch.name=@schemaName
+							 AND t.name=@tableName
+							 AND ind.name=@indexName
                         ) x
               FOR
                 XML PATH('')
-              ), 1, 1, '')+' FROM '+QUOTENAME('~schemaname')+'.'+QUOTENAME('~tablename')
+              ), 1, 1, '')+' FROM '+QUOTENAME(@schemaName)+'.'+QUOTENAME(@tableName)
 			return @result
 END
+
