@@ -257,7 +257,7 @@ DECLARE @sql nvarchar(max), @sql2 nvarchar(max), @sql3 nvarchar(max),
         
               ,CASE WHEN SERVERPROPERTY(''ProductMajorVersion'')<14 THEN '''' ELSE ''ss.instant_file_initialization_enabled'' END AS Is_IFI_Enabled
 		  ,(select COUNT(database_id) from sys.databases where database_id >4 ) as [User_DB_Count]
-			  ,(select SUM(size)/128 from sys.master_files ) as [Total_DB_Size (MB)]
+			  ,(select SUM(size*1.0)/128 from sys.master_files ) as [Total_DB_Size (MB)]
         INTO ##TMP
     FROM sys.dm_os_sys_info AS sysinfo WITH (NOLOCK)
     LEFT JOIN #dm_server_services AS sqlsrv ON sqlsrv.servicename LIKE ''SQL Server (%''
