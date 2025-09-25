@@ -1,0 +1,200 @@
+/* SET SERVEROUTPUT ON komutunu çalıştırmayı unutmayın */
+-- SET SERVEROUTPUT ON SIZE UNLIMITED;
+
+/* 1. YARDIMCI FONKSİYONLAR */
+
+-- Sayıları binlik ayraçlarla formatlayan fonksiyon (SQL Server'daki fn_format_number karşılığı)
+CREATE OR REPLACE FUNCTION fn_format_number(
+    p_number IN NUMBER,
+    p_prec   IN PLS_INTEGER DEFAULT 0
+) RETURN VARCHAR2
+IS
+    v_format_mask VARCHAR2(100);
+BEGIN
+    IF p_number IS NULL THEN
+        RETURN NULL;
+    END IF;
+
+    v_format_mask := 'FM999G999G999G999G990'; -- G: Grup ayıracı (binlik)
+    IF p_prec > 0 THEN
+        v_format_mask := v_format_mask || 'D' || RPAD('', p_prec, '0'); -- D: Ondalık ayıracı
+    END IF;
+
+    RETURN LTRIM(TO_CHAR(p_number, v_format_mask));
+END;
+/
+
+-- Boyutları okunabilir formata çeviren fonksiyon (kB, MB, GB, TB) (fn_friendly_size karşılığı)
+CREATE OR REPLACE FUNCTION fn_friendly_size(
+    p_bytes IN NUMBER
+) RETURN VARCHAR2
+IS
+    v_k NUMBER := 1024;
+BEGIN
+    IF p_bytes IS NULL THEN
+        RETURN NULL;
+    END IF;
+
+    IF p_bytes < 4 * v_k * v_k THEN
+        RETURN fn_format_number(p_bytes / v_k, 1) || ' kB';
+    ELSIF p_bytes < 4 * v_k * v_k * v_k THEN
+        RETURN fn_format_number(p_bytes / POWER(v_k, 2), 2) || ' MB';
+    ELSIF p_bytes < 4 * v_k * v_k * v_k * v_k THEN
+        RETURN fn_format_number(p_bytes / POWER(v_k, 3), 2) || ' GB';
+    ELSE
+        RETURN fn_format_number(p_bytes / POWER(v_k, 4), 2) || ' TB';
+    END IF;
+END;
+/
+
+-- Geçen süreyi okunabilir formata çeviren fonksiyon (fn_friendly_age karşılığı)
+CREATE OR REPLACE FUNCTION fn_friendly_age(
+    p_from IN TIMESTAMP,
+    p_to   IN TIMESTAMP
+) RETURN VARCHAR2
+IS
+    v_interval INTERVAL DAY TO SECOND;
+    v_days     NUMBER;
+    v_hours    NUMBER;
+    v_minutes  NUMBER;
+    v_seconds  NUMBER;
+BEGIN
+    IF p_from IS NULL OR p_to IS NULL THEN
+        RETURN NULL;
+    END IF;
+
+    v_interval := p_to - p_from;
+    v_days    := EXTRACT(DAY FROM v_interval);
+    v_hours   := EXTRACT(HOUR FROM v_interval);
+    v_minutes := EXTRACT(MINUTE FROM v_interval);
+    v_seconds := EXTRACT(SECOND FROM v_interval);
+
+    IF v_days > 2 THEN
+        RETURN v_days || 'd';
+    ELSE
+        RETURN LPAD(v_days, 2, '0') || 'd ' ||
+               LPAD(v_hours, 2, '0') || ':' ||
+               LPAD(v_minutes, 2, '0') || ':' ||
+               LPAD(FLOOR(v_seconds), 2, '0');
+    END IF;
+END;
+/
+
+/* 2. ANA PROSEDÜR */
+
+-- Oracle veritabanı ve sunucu bilgilerini gösteren ana prosedür (sp_ServerInfo karşılığı)
+CREATE OR REPLACE PROCEDURE sp_ServerInfo
+AS
+    -- Değişkenler
+    v_host_name              VARCHAR2(100);
+    v_instance_name          VARCHAR2(100);
+    v_version_full           VARCHAR2(200);
+    v_startup_time           TIMESTAMP;
+    v_uptime                 VARCHAR2(50);
+    v_db_character_set       VARCHAR2(100);
+    v_db_sort                VARCHAR2(100);
+    v_is_rac                 VARCHAR2(20);
+    v_physical_memory_bytes  NUMBER;
+    v_sga_max_size           NUMBER;
+    v_pga_aggregate_target   NUMBER;
+    v_cpu_count_os           NUMBER;
+    v_cpu_core_count         NUMBER;
+    v_cpu_socket_count       NUMBER;
+    v_parallel_max_servers   NUMBER;
+    v_user_schema_count      NUMBER;
+    v_total_db_size_mb       NUMBER;
+    v_scheduler_status       VARCHAR2(50);
+
+BEGIN
+    -- Bilgileri V$ görünümlerinden topla
+    SELECT host_name, instance_name, version_full, startup_time
+    INTO v_host_name, v_instance_name, v_version_full, v_startup_time
+    FROM V$INSTANCE;
+
+    SELECT value INTO v_is_rac FROM V$PARAMETER WHERE name = 'cluster_database';
+    v_is_rac := CASE WHEN v_is_rac = 'TRUE' THEN 'Cluster (RAC)' ELSE 'Stand-alone' END;
+
+    v_uptime := fn_friendly_age(v_startup_time, SYSTIMESTAMP);
+
+    SELECT value INTO v_db_character_set FROM NLS_DATABASE_PARAMETERS WHERE parameter = 'NLS_CHARACTERSET';
+    SELECT value INTO v_db_sort FROM NLS_DATABASE_PARAMETERS WHERE parameter = 'NLS_SORT';
+
+    SELECT value INTO v_physical_memory_bytes FROM V$OSSTAT WHERE stat_name = 'PHYSICAL_MEMORY_BYTES';
+    SELECT value INTO v_sga_max_size FROM V$PARAMETER WHERE name = 'sga_max_size';
+    SELECT value INTO v_pga_aggregate_target FROM V$PARAMETER WHERE name = 'pga_aggregate_target';
+
+    SELECT value INTO v_cpu_count_os FROM V$OSSTAT WHERE stat_name = 'NUM_CPUS';
+    SELECT value INTO v_cpu_core_count FROM V$OSSTAT WHERE stat_name = 'NUM_CPU_CORES';
+    SELECT value INTO v_cpu_socket_count FROM V$OSSTAT WHERE stat_name = 'NUM_CPU_SOCKETS';
+
+    SELECT value INTO v_parallel_max_servers FROM V$PARAMETER WHERE name = 'parallel_max_servers';
+
+    SELECT COUNT(*) INTO v_user_schema_count FROM dba_users WHERE oracle_maintained = 'N';
+    SELECT SUM(bytes) / 1024 / 1024 INTO v_total_db_size_mb FROM dba_data_files;
+
+    SELECT
+        CASE WHEN value = 'TRUE' THEN 'Disabled' ELSE 'Enabled' END
+    INTO v_scheduler_status
+    FROM dba_scheduler_global_attribute
+    WHERE attribute_name = 'SCHEDULER_DISABLED';
+
+    -- Sonuçları ekrana yazdır
+    DBMS_OUTPUT.PUT_LINE(RPAD('=', 80, '='));
+    DBMS_OUTPUT.PUT_LINE('Oracle Server Information');
+    DBMS_OUTPUT.PUT_LINE(RPAD('-', 80, '-'));
+
+    DBMS_OUTPUT.PUT_LINE(RPAD('Host Name', 30) || ': ' || v_host_name);
+    DBMS_OUTPUT.PUT_LINE(RPAD('Instance Name', 30) || ': ' || v_instance_name);
+    DBMS_OUTPUT.PUT_LINE(RPAD('Configuration', 30) || ': ' || v_is_rac);
+    DBMS_OUTPUT.PUT_LINE(RPAD('Version', 30) || ': ' || v_version_full);
+    DBMS_OUTPUT.PUT_LINE(RPAD('Uptime', 30) || ': ' || v_uptime || ' (since ' || TO_CHAR(v_startup_time, 'YYYY-MM-DD HH24:MI:SS') || ')');
+
+    DBMS_OUTPUT.PUT_LINE(RPAD('-', 80, '-'));
+    DBMS_OUTPUT.PUT_LINE('Memory & CPU');
+    DBMS_OUTPUT.PUT_LINE(RPAD('-', 80, '-'));
+
+    DBMS_OUTPUT.PUT_LINE(RPAD('Physical Memory (Host)', 30) || ': ' || fn_friendly_size(v_physical_memory_bytes));
+    DBMS_OUTPUT.PUT_LINE(RPAD('SGA Max Size', 30) || ': ' || fn_friendly_size(v_sga_max_size));
+    DBMS_OUTPUT.PUT_LINE(RPAD('PGA Aggregate Target', 30) || ': ' || fn_friendly_size(v_pga_aggregate_target));
+    DBMS_OUTPUT.PUT_LINE(RPAD('CPU Sockets | Cores | Threads', 30) || ': ' || v_cpu_socket_count || ' | ' || v_cpu_core_count || ' | ' || v_cpu_count_os);
+    DBMS_OUTPUT.PUT_LINE(RPAD('Parallel Max Servers (MaxDOP)', 30) || ': ' || v_parallel_max_servers);
+
+    DBMS_OUTPUT.PUT_LINE(RPAD('-', 80, '-'));
+    DBMS_OUTPUT.PUT_LINE('Database Configuration');
+    DBMS_OUTPUT.PUT_LINE(RPAD('-', 80, '-'));
+
+    DBMS_OUTPUT.PUT_LINE(RPAD('DB Character Set', 30) || ': ' || v_db_character_set);
+    DBMS_OUTPUT.PUT_LINE(RPAD('DB Sort', 30) || ': ' || v_db_sort);
+    DBMS_OUTPUT.PUT_LINE(RPAD('Scheduler (Agent) Status', 30) || ': ' || v_scheduler_status);
+    DBMS_OUTPUT.PUT_LINE(RPAD('User Schema Count', 30) || ': ' || v_user_schema_count);
+    DBMS_OUTPUT.PUT_LINE(RPAD('Total Datafile Size', 30) || ': ' || fn_format_number(v_total_db_size_mb, 0) || ' MB');
+
+    DBMS_OUTPUT.PUT_LINE(RPAD('=', 80, '='));
+
+EXCEPTION
+    WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE('An error occurred: ' || SQLERRM);
+END;
+/
+
+
+/* 3. PROSEDÜRÜ ÇALIŞTIRMA */
+
+-- Prosedürü çalıştırmadan önce sunucu çıktısını etkinleştirin
+SET SERVEROUTPUT ON;
+
+-- Prosedürü çağırın
+BEGIN
+    sp_ServerInfo;
+END;
+/
+
+
+/* 4. OLUŞTURULAN NESNELERİ SİLME (İsteğe bağlı)
+
+DROP FUNCTION fn_format_number;
+DROP FUNCTION fn_friendly_size;
+DROP FUNCTION fn_friendly_age;
+DROP PROCEDURE sp_ServerInfo;
+
+*/
